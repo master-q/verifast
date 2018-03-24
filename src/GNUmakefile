@@ -78,8 +78,7 @@ else
   LDLPATHVAR=LD_LIBRARY_PATH
 endif
 
-#Z3V4DOT5=yes
-NOZ3=yes
+Z3V4DOT5=yes
 
 # Z3 configuration
 # TODO: refactor variable names: "Z3" could be anything (path? version? boolean?)
