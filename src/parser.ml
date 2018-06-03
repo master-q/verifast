@@ -39,7 +39,7 @@ let c_keywords = [
   "SHRT_MIN"; "SHRT_MAX"; "USHRT_MAX"; "UINT_MAX"; "UCHAR_MAX";
   "LLONG_MIN"; "LLONG_MAX"; "ULLONG_MAX";
   "__int8"; "__int16"; "__int32"; "__int64"; "__int128";
-  "inline"; "__inline"; "__inline__"; "__forceinline"
+  "inline"; "__inline"; "__inline__"; "__forceinline"; "__signed__"
 ]
 
 let java_keywords = [
@@ -772,6 +772,7 @@ and
      end
    >] -> t
 | [< '(l, Kwd "signed"); n = parse_integer_type_rest >] -> ManifestTypeExpr (l, Int (Signed, n))
+| [< '(l, Kwd "__signed__"); n = parse_integer_type_rest >] -> ManifestTypeExpr (l, Int (Signed, n))
 | [< '(l, Kwd "unsigned"); n = parse_integer_type_rest >] -> ManifestTypeExpr (l, Int (Unsigned, n))
 | [< '(l, Kwd "uintptr_t") >] -> ManifestTypeExpr (l, Int (Unsigned, ptr_rank))
 | [< '(l, Kwd "real") >] -> ManifestTypeExpr (l, RealType)
