@@ -39,7 +39,8 @@ let c_keywords = [
   "SHRT_MIN"; "SHRT_MAX"; "USHRT_MAX"; "UINT_MAX"; "UCHAR_MAX";
   "LLONG_MIN"; "LLONG_MAX"; "ULLONG_MAX";
   "__int8"; "__int16"; "__int32"; "__int64"; "__int128";
-  "inline"; "__inline"; "__inline__"; "__forceinline"; "__signed__"
+  "inline"; "__inline"; "__inline__"; "__forceinline"; "__signed__";
+  "__always_inline"
 ]
 
 let java_keywords = [
@@ -440,6 +441,7 @@ and
 | [< '(l, Kwd "__inline") >] -> ()
 | [< '(l, Kwd "__inline__") >] -> ()
 | [< '(l, Kwd "__forceinline") >] -> ()
+| [< '(l, Kwd "__always_inline") >] -> ()
 | [< >] -> ()
 and
   parse_decl = parser
