@@ -40,7 +40,7 @@ let c_keywords = [
   "LLONG_MIN"; "LLONG_MAX"; "ULLONG_MAX";
   "__int8"; "__int16"; "__int32"; "__int64"; "__int128";
   "inline"; "__inline"; "__inline__"; "__forceinline"; "__signed__";
-  "__always_inline"
+  "__always_inline"; "extern"
 ]
 
 let java_keywords = [
@@ -480,6 +480,7 @@ and
      '(_, Kwd "}"); '(_, Kwd ";"); >] ->
   [EnumDecl(l, n, elems)]
 | [< '(_, Kwd "static"); _ = parse_ignore_inline; t = parse_return_type; d = parse_func_rest Regular t Private >] -> check_function_for_contract d
+| [< '(_, Kwd "extern"); t = parse_return_type; d = parse_func_rest Regular t Public >] -> check_function_for_contract d
 | [< t = parse_return_type; d = parse_func_rest Regular t Public >] -> check_function_for_contract d
 and check_for_contract: 'a. 'a option -> loc -> string -> (asn * asn -> 'a) -> 'a = fun contract l m f ->
   match contract with
