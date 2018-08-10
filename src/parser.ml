@@ -808,8 +808,8 @@ and
 and
   parse_type_suffix t0 = parser
   [< '(l, Kwd "*"); t = parse_type_suffix (PtrTypeExpr (l, t0)) >] -> t
-| [< '(l, Kwd "volatile"); t = parse_type_suffix (PtrTypeExpr (l, t0)) >] -> t
-| [< '(l, Kwd "const"); t = parse_type_suffix (PtrTypeExpr (l, t0)) >] -> t
+| [< '(l, Kwd "volatile"); t = parse_type_suffix t0 >] -> t
+| [< '(l, Kwd "const"); t = parse_type_suffix t0 >] -> t
 | [< '(l, Kwd "["); '(_, Kwd "]"); t = parse_type_suffix (ArrayTypeExpr (l,t0)) >] -> t
 | [< >] -> t0
 and
