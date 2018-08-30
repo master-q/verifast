@@ -45,12 +45,7 @@ module VerifyProgram(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
   
   let rec verify_stmt (pn,ilist) blocks_done lblenv tparams boxes pure leminfo funcmap predinstmap sizemap tenv ghostenv h env s tcont return_cont econt =
     let l = stmt_loc s in
-    let _ =
-      match s with
-      (* Make sure that nested statements are not counted *)
-      | PureStmt _ | NonpureStmt _ | IfStmt _  | SwitchStmt _ | WhileStmt _ | BlockStmt _ -> ()
-      | _ -> !stats#stmtExec l;
-    in
+    if not (is_transparent_stmt s) then begin !stats#stmtExec l; reportStmtExec l end;
     let break_label () = if pure then "#ghostBreak" else "#break" in
     let free_locals closeBraceLoc h tenv env locals cont =
       let rec free_locals_core h locals =
@@ -2219,6 +2214,7 @@ module VerifyProgram(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
         in
         let tcont sizemap tenv ghostenv h env =
           let epilog = List.map (function (PureStmt (l, s)) -> s | s -> static_error (stmt_loc s) "An epilog statement must be a pure statement." None) epilog in
+          reportStmtExec lr;
           verify_return_stmt (pn,ilist) blocks_done lblenv tparams boxes pure leminfo funcmap predinstmap sizemap tenv ghostenv h env true lr eo epilog return_cont econt
         in
         (ss, tcont)
@@ -3111,7 +3107,7 @@ end
 
 (** Verifies the .c/.jarsrc/.scala file at path [path].
     Uses the SMT solver [ctxt].
-    Reports syntax highlighting regions using the callback [reportRange].
+    Reports syntax highlighting regions using the callback [reportRange] in [callbacks].
     Stops at source line [breakpoint], if not None.
     This function is generic in the types of SMT solver types, symbols, and terms.
     *)
@@ -3121,9 +3117,7 @@ let verify_program_core (* ?verify_program_core *)
     (ctxt: (typenode', symbol', termnode') Proverapi.context)
     (options : options)
     (program_path : string)
-    (reportRange : range_kind -> loc -> unit)
-    (reportUseSite : decl_kind -> loc -> loc -> unit)
-    (reportExecutionForest : node list ref -> unit)
+    (callbacks : callbacks)
     (breakpoint : (string * int) option)
     (targetPath : int list option) : unit =
 
@@ -3135,9 +3129,7 @@ let verify_program_core (* ?verify_program_core *)
     let ctxt = ctxt
     let options = options
     let program_path = program_path
-    let reportRange = reportRange
-    let reportUseSite = reportUseSite
-    let reportExecutionForest = reportExecutionForest
+    let callbacks = callbacks
     let breakpoint = breakpoint
     let targetPath = targetPath
   end) in
@@ -3188,16 +3180,14 @@ let verify_program (* ?verify_program *)
     (prover : string)
     (options : options)
     (path : string)
-    (reportRange : range_kind -> loc -> unit)
-    (reportUseSite : decl_kind -> loc -> loc -> unit)
-    (reportExecutionForest : node list ref -> unit)
+    (callbacks : callbacks)
     (breakpoint : (string * int) option)
     (targetPath : int list option) : Stats.stats =
   lookup_prover prover
     (object
        method run: 'typenode 'symbol 'termnode. ('typenode, 'symbol, 'termnode) Proverapi.context -> Stats.stats =
          fun ctxt -> clear_stats ();
-                     verify_program_core ~emitter_callback:emitter_callback ctxt options path reportRange reportUseSite reportExecutionForest breakpoint targetPath;
+                     verify_program_core ~emitter_callback:emitter_callback ctxt options path callbacks breakpoint targetPath;
                      !stats
      end)
 

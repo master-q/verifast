@@ -39,12 +39,13 @@
 .provides ./prelude.h#int_of_chars_size
 .provides ./prelude.h#chars_of_int_char_in_bounds
 .provides ./prelude.h#chars_to_integer
+.provides ./prelude.h#chars_to_integer_
 .provides ./prelude.h#chars_to_u_integer
 .provides ./prelude.h#chars_to_short_integer
 .provides ./prelude.h#chars_to_u_short_integer
 .provides ./prelude.h#chars_to_pointer
-.provides ./prelude.h#chars_to_u_pointer
 .provides ./prelude.h#integer_to_chars
+.provides ./prelude.h#integer__to_chars
 .provides ./prelude.h#u_integer_to_chars
 .provides ./prelude.h#short_integer_to_chars
 .provides ./prelude.h#u_short_integer_to_chars
@@ -64,6 +65,7 @@
 .provides ./prelude.h#uchars_split
 .provides ./prelude.h#uchars_join
 .provides ./prelude.h#ints_inv
+.provides ./prelude.h#integers__inv
 .provides ./prelude.h#uints_inv
 .provides ./prelude.h#llongs_inv
 .provides ./prelude.h#ullongs_inv
@@ -80,6 +82,10 @@
 .provides ./prelude.h#ints_to_chars
 .provides ./prelude.h#chars_to_uints
 .provides ./prelude.h#uints_to_chars
+.provides ./prelude.h#chars_to_integers_
+.provides ./prelude.h#integers__to_chars
+.provides ./prelude.h#uchars_to_integers_
+.provides ./prelude.h#integers__to_uchars
 .provides ./prelude.h#div_rem
 .provides ./prelude.h#divrem_intro
 .provides ./prelude.h#divrem_elim

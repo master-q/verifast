@@ -9,6 +9,16 @@ open Parser
 open Verifast0
 open Ast
 
+type callbacks = {
+  reportRange: range_kind -> loc -> unit;
+  reportUseSite: decl_kind -> loc -> loc -> unit;
+  reportExecutionForest: node list ref -> unit;
+  reportStmt: loc -> unit;
+  reportStmtExec: loc -> unit
+}
+
+let noop_callbacks = {reportRange = (fun _ _ -> ()); reportUseSite = (fun _ _ _ -> ()); reportExecutionForest = (fun _ -> ()); reportStmt = (fun _ -> ()); reportStmtExec = (fun _ -> ())}
+
 module type VERIFY_PROGRAM_ARGS = sig
   val emitter_callback: package list -> unit
   type typenode
@@ -17,9 +27,7 @@ module type VERIFY_PROGRAM_ARGS = sig
   val ctxt: (typenode, symbol, termnode) Proverapi.context
   val options: options
   val program_path: string
-  val reportRange: range_kind -> loc -> unit
-  val reportUseSite: decl_kind -> loc -> loc -> unit
-  val reportExecutionForest: node list ref -> unit
+  val callbacks: callbacks
   val breakpoint: (string * int) option
   val targetPath: int list option
 end
@@ -46,6 +54,8 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
     option_data_model=data_model
   } = options
 
+  let {reportRange; reportUseSite; reportExecutionForest; reportStmt; reportStmtExec} = callbacks
+
   let data_model = match language with Java -> data_model_java | CLang -> data_model
   let {int_rank; long_rank; ptr_rank} = data_model
   let llong_rank = 3
@@ -53,6 +63,12 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
   let intType = Int (Signed, int_rank)
   let sizeType = Int (Unsigned, ptr_rank)
   let ptrdiff_t = Int (Signed, ptr_rank)
+
+  let int_rank_and_signedness tp =
+    match tp with
+      Int (signedness, rank) -> Some (rank, signedness)
+    | PtrType _ -> Some (ptr_rank, Unsigned)
+    | _ -> None
 
   let verbosity = ref 0
   
@@ -370,6 +386,10 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
   let instanceof_symbol = ctxt#mk_symbol "instanceof" [ctxt#type_int; ctxt#type_int] ctxt#type_bool Uninterp
   let array_type_symbol = ctxt#mk_symbol "array_type"  [ctxt#type_int] ctxt#type_int Uninterp
   
+  let true_term = ctxt#mk_true
+  let false_term = ctxt#mk_false
+  let mk_bool b = if b then true_term else false_term
+
   let two_big_int = big_int_of_int 2
   
   let real_zero = ctxt#mk_reallit 0
@@ -384,6 +404,10 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
   type integer_limits = {max_unsigned_big_int: big_int; min_signed_big_int: big_int; max_signed_big_int: big_int; max_unsigned_term: termnode; min_signed_term: termnode; max_signed_term: termnode}
 
   let max_rank = 4 (* (u)int128 *)
+
+  let rank_size_terms_table = Array.init (max_rank + 1) (fun k -> ctxt#mk_intlit (1 lsl k))
+
+  let rank_size_term k = rank_size_terms_table.(k)
 
   let integer_limits_table =
     Array.init (max_rank + 1) begin fun k ->
@@ -3913,6 +3937,9 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
   let array_slice_symb = lazy_predfamsymb "java.lang.array_slice"
   let array_slice_deep_symb = lazy_predfamsymb "java.lang.array_slice_deep"
   
+  let integer__symb = lazy_predfamsymb "integer_"
+  let integers__symb = lazy_predfamsymb "integers_"
+
   let pointee_tuple chunk_pred_name array_pred_name =
     let array_malloc_block_pred_name = "malloc_block_" ^ array_pred_name in
     chunk_pred_name, lazy_predfamsymb chunk_pred_name, array_pred_name, lazy_predfamsymb array_pred_name, array_malloc_block_pred_name, lazy_predfamsymb array_malloc_block_pred_name
@@ -3982,15 +4009,7 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
           | StaticArrayType (t, _) -> t
           | _ -> static_error lread "Array in array dereference must be of pointer type." None
         in
-        let (pointee_pred_name, pointee_pred_symb, array_pred_name, array_pred_symb, _, _) =
-          match try_pointee_pred_symb0 elemtype with
-            Some info -> info
-          | None -> static_error l ("Only arrays whose element type is "^supported_types_text^" are currently supported here.") None
-        in
         let (wrhs, tenv) = check_pat (pn,ilist) tparams tenv (list_type elemtype) rhs in
-        let p = new predref array_pred_name in
-        p#set_domain [PtrType elemtype; intType; list_type elemtype];
-        p#set_inputParamCount (Some 2);
         let wfirst, wlength =
           match wstart, wend with
             None, Some wend -> warray, wend
@@ -4000,7 +4019,18 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
             LitPat (WOperation (lslice, Sub, [wend; wstart], intType))
           | _ -> static_error l "Malformed array assertion." None
         in
-        (WPredAsn (l, p, true, [], [], [LitPat wfirst; wlength; wrhs]), tenv, [])
+        begin match try_pointee_pred_symb0 elemtype with
+          Some (pointee_pred_name, pointee_pred_symb, array_pred_name, array_pred_symb, _, _) ->
+          let p = new predref array_pred_name [PtrType elemtype; intType; list_type elemtype] (Some 2) in
+          (WPredAsn (l, p, true, [], [], [LitPat wfirst; wlength; wrhs]), tenv, [])
+        | None ->
+        match int_rank_and_signedness elemtype with
+          Some (k, signedness) ->
+          let p = new predref "integers_" [PtrType Void; intType; Bool; intType; list_type elemtype] (Some 4) in
+          (WPredAsn (l, p, true, [], [], [LitPat wfirst; LitPat (WIntLit (l, big_int_of_int (1 lsl k))); LitPat (if signedness = Signed then True l else False l); wlength; wrhs]), tenv, [])
+        | None ->
+          static_error l (Printf.sprintf "Array points-to notation is not supported for element type '%s'" (string_of_type elemtype)) None
+        end
       | Java ->
         let elemtype =
           match tarray with
@@ -4008,8 +4038,7 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
           | _ -> static_error lread "Array in array dereference must be of array type." None
         in
         let (wrhs, tenv) = check_pat (pn,ilist) tparams tenv (list_type elemtype) rhs in
-        let p = new predref "java.lang.array_slice" in
-        p#set_domain [ArrayType elemtype; intType; intType; list_type elemtype]; p#set_inputParamCount (Some 3);
+        let p = new predref "java.lang.array_slice" [ArrayType elemtype; intType; intType; list_type elemtype] (Some 3) in
         let wstart = match wstart with None -> LitPat (wintlit lslice zero_big_int) | Some wstart -> wstart in
         let wend = match wend with None -> LitPat (ArrayLengthExpr (lslice, warray)) | Some wend -> wend in
         let args = [LitPat warray; wstart; wend; wrhs] in
@@ -4028,32 +4057,32 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
     | PredAsn (l, p, targs, ps0, ps) ->
       let targs = List.map (check_pure_type (pn, ilist) tparams) targs in
       begin fun cont ->
-         match try_assoc p#name tenv |> option_map unfold_inferred_type with
-           Some (PredType (callee_tparams, ts, inputParamCount, inductiveness)) -> cont (new predref (p#name), false, callee_tparams, [], ts, inputParamCount)
+         match try_assoc p tenv |> option_map unfold_inferred_type with
+           Some (PredType (callee_tparams, ts, inputParamCount, inductiveness)) -> cont (p, false, callee_tparams, [], ts, inputParamCount)
          | None | Some _ ->
-          begin match resolve Ghost (pn,ilist) l p#name predfammap with
+          begin match resolve Ghost (pn,ilist) l p predfammap with
             Some (pname, (_, callee_tparams, arity, xs, _, inputParamCount, inductiveness)) ->
             let ts0 = match file_type path with
               Java-> list_make arity (ObjType "java.lang.Class")
             | _   -> list_make arity (PtrType Void)
             in
-            cont (new predref pname, true, callee_tparams, ts0, xs, inputParamCount)
+            cont (pname, true, callee_tparams, ts0, xs, inputParamCount)
           | None ->
             begin match
-              match try_assoc p#name predctormap1 with
+              match try_assoc p predctormap1 with
                 Some (l, ps1, ps2, inputParamCount, body, funcsym, pn, ilist) -> Some (ps1, ps2, inputParamCount)
               | None ->
-              match try_assoc p#name predctormap0 with
+              match try_assoc p predctormap0 with
                 Some (PredCtorInfo (l, ps1, ps2, inputParamCount, body, funcsym)) -> Some (ps1, ps2, inputParamCount)
               | None -> None
             with
               Some (ps1, ps2, inputParamCount) ->
-              cont (new predref (p#name), true, [], List.map snd ps1, List.map snd ps2, inputParamCount)
+              cont (p, true, [], List.map snd ps1, List.map snd ps2, inputParamCount)
             | None ->
               let error () = 
-                begin match try_assoc p#name tenv with
-                  None ->  static_error l ("No such predicate: " ^ p#name) None 
-                | Some _ -> static_error l ("Variable " ^ p#name ^ " is not of predicate type.") None 
+                begin match try_assoc p tenv with
+                  None ->  static_error l ("No such predicate: " ^ p) None 
+                | Some _ -> static_error l ("Variable " ^ p ^ " is not of predicate type.") None 
                 end
               in
               begin match try_assoc "this" tenv with
@@ -4069,9 +4098,9 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
                     else
                       get_class_of_this
                   in
-                  (WInstPredAsn (l, None, cn, get_class_finality cn, family, p#name, index, wps), tenv, [])
+                  (WInstPredAsn (l, None, cn, get_class_finality cn, family, p, index, wps), tenv, [])
                 in
-                check_inst_pred_asn l cn p#name check_call error
+                check_inst_pred_asn l cn p check_call error
               | Some(_) -> error ()
               end
             end
@@ -4093,7 +4122,7 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
         let (wps0, tenv) = check_pats (pn,ilist) l tparams tenv ts0 ps0 in
         let xs' = List.map (instantiate_type tpenv) xs in
         let (wps, tenv) = check_pats (pn,ilist) l tparams tenv xs' ps in
-        p#set_domain (ts0 @ xs'); p#set_inputParamCount inputParamCount;
+        let p = new predref p (ts0 @ xs') inputParamCount in
         (WPredAsn (l, p, is_global_predref, targs, wps0, wps), tenv, inferredTypes)
       end
     | InstPredAsn (l, e, g, index, pats) ->
@@ -4203,7 +4232,7 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
     | e ->
       let a =
         match e with
-        | CallExpr (l, g, targs, pats0, pats, Static) -> PredAsn (l, new predref g, targs, pats0, pats)
+        | CallExpr (l, g, targs, pats0, pats, Static) -> PredAsn (l, g, targs, pats0, pats)
         | CallExpr (l, g, [], pats0, LitPat e::pats, Instance) ->
           let index =
             match pats0 with
@@ -4391,8 +4420,8 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
                 (f, (l, Real, t, offset)) ->
                 begin
                 let (g, (_, _, _, _, symb, _, inductiveness)) = List.assoc (sn, f) field_pred_map in (* TODO WILLEM: we moeten die inductiveness ergens gebruiken *)
-                let predinst p =
-                  p#set_inputParamCount (Some 1);
+                let predinst p domain =
+                  let p = new predref p domain (Some 1) in
                   ((g, []),
                    ([], l, [], [sn, PtrType (StructType sn); "value", t], symb, Some 1,
                     let r = WRead (l, WVar (l, sn, LocalVar), sn, f, t, false, ref (Some None), Real) in
@@ -4402,41 +4431,23 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
                 in
                 match t with
                   PtrType _ ->
-                  let pref = new predref "pointer" in
-                  pref#set_domain [PtrType (PtrType Void); PtrType Void];
-                  [predinst pref]
+                  [predinst "pointer" [PtrType (PtrType Void); PtrType Void]]
                 | Int (Signed, 3) ->
-                  let pref = new predref "llong_integer" in
-                  pref#set_domain [PtrType (Int (Signed, 3)); (Int(Signed, 3))];
-                  [predinst pref]
+                  [predinst "llong_integer" [PtrType (Int (Signed, 3)); (Int(Signed, 3))]]
                 | Int (Unsigned, 3) ->
-                  let pref = new predref "u_llong_integer" in
-                  pref#set_domain [PtrType (Int (Unsigned, 3)); Int (Unsigned, 3)];
-                  [predinst pref]
+                  [predinst "u_llong_integer" [PtrType (Int (Unsigned, 3)); Int (Unsigned, 3)]]
                 | Int (Signed, 2) when int_rank = 2 ->
-                  let pref = new predref "integer" in
-                  pref#set_domain [PtrType intType; intType];
-                  [predinst pref]
+                  [predinst "integer" [PtrType intType; intType]]
                 | Int (Unsigned, 2) when int_rank = 2 ->
-                  let pref = new predref "u_integer" in
-                  pref#set_domain [PtrType (Int (Unsigned, 2)); Int (Unsigned, 2)];
-                  [predinst pref]
+                  [predinst "u_integer" [PtrType (Int (Unsigned, 2)); Int (Unsigned, 2)]]
                 | Int (Signed, 1) ->
-                  let pref = new predref "short_integer" in
-                  pref#set_domain [PtrType (Int (Signed, 2)); (Int (Signed, 2))];
-                  [predinst pref]
+                  [predinst "short_integer" [PtrType (Int (Signed, 2)); (Int (Signed, 2))]]
                 | Int (Unsigned, 1) ->
-                  let pref = new predref "u_short_integer" in
-                  pref#set_domain [PtrType (Int (Unsigned, 2)); Int (Unsigned, 2)];
-                  [predinst pref]
+                  [predinst "u_short_integer" [PtrType (Int (Unsigned, 2)); Int (Unsigned, 2)]]
                 | Int (Signed, 0) ->
-                  let pref = new predref "character" in
-                  pref#set_domain [PtrType (Int (Signed, 1)); Int (Signed, 1)];
-                  [predinst pref]
+                  [predinst "character" [PtrType (Int (Signed, 1)); Int (Signed, 1)]]
                 | Int (Unsigned, 0) ->
-                  let pref = new predref "u_character" in
-                  pref#set_domain [PtrType (Int (Unsigned, 1)); Int (Unsigned, 1)];
-                  [predinst pref]
+                  [predinst "u_character" [PtrType (Int (Unsigned, 1)); Int (Unsigned, 1)]]
                 | _ -> []
                 end
               | _ -> []
@@ -4583,7 +4594,7 @@ module VerifyProgram1(VerifyProgramArgs: VERIFY_PROGRAM_ARGS) = struct
   let rec sizeof l t =
     match t with
       Void -> ctxt#mk_intlit 1
-    | Int (_, k) -> ctxt#mk_intlit (1 lsl k)
+    | Int (_, k) -> rank_size_term k
     | PtrType _ -> ctxt#mk_intlit (1 lsl ptr_rank)
     | StructType sn -> struct_size l sn
     | StaticArrayType (elemTp, elemCount) -> ctxt#mk_mul (sizeof l elemTp) (ctxt#mk_intlit elemCount)

@@ -143,19 +143,12 @@ let is_arithmetic_type t =
 
 type prover_type = ProverInt | ProverBool | ProverReal | ProverInductive (* ?prover_type *)
 
-(** An object used in predicate assertion ASTs. Created by the parser and filled in by the type checker.
-    TODO: Since the type checker now generates a new AST anyway, we can eliminate this hack. *)
-class predref (name: string) = (* ?predref *)
+class predref (name: string) (domain: type_ list) (inputParamCount: int option) = (* ?predref *)
   object
-    val mutable tparamcount: int option = None  (* Number of type parameters. *)
-    val mutable domain: type_ list option = None  (* Parameter types. *)
-    val mutable inputParamCount: int option option = None  (* Number of input parameters, or None if the predicate is not precise. *)
     method name = name
-    method domain = match domain with None -> assert false | Some d -> d
-    method inputParamCount = match inputParamCount with None -> assert false | Some c -> c
-    method set_domain d = domain <- Some d
-    method set_inputParamCount c = inputParamCount <- Some c
-    method is_precise = match inputParamCount with None -> assert false; | Some None -> false | Some (Some _) -> true 
+    method domain = domain
+    method inputParamCount = inputParamCount
+    method is_precise = match inputParamCount with None -> false | Some _ -> true 
   end
 
 type
@@ -321,7 +314,7 @@ and
       pat
   | PredAsn of (* Predicate assertion, before type checking *)
       loc *
-      predref *
+      string *
       type_expr list *
       pat list (* indices of predicate family instance *) *
       pat list
@@ -870,6 +863,51 @@ let stmt_loc s =
   | ProduceFunctionPointerChunkStmt (l, ftn, fpe, targs, args, params, openBraceLoc, ss, closeBraceLoc) -> l
   | Break (l) -> l
   | SuperConstructorCall(l, _) -> l
+
+let stmt_fold_open f state s =
+  match s with
+    PureStmt (l, s) -> f state s
+  | NonpureStmt (l, _, s) -> f state s
+  | IfStmt (l, _, sst, ssf) -> let state = List.fold_left f state sst in List.fold_left f state ssf
+  | SwitchStmt (l, _, cs) ->
+    let rec iter state c =
+      match c with
+        SwitchStmtClause (l, e, ss) -> List.fold_left f state ss
+      | SwitchStmtDefaultClause (l, ss) -> List.fold_left f state ss
+    in
+    List.fold_left iter state cs
+  | WhileStmt (l, _, _, _, ss) -> List.fold_left f state ss
+  | TryCatch (l, ss, ccs) ->
+    let state = List.fold_left f state ss in
+    List.fold_left (fun state (_, _, _, ss) -> List.fold_left f state ss) state ccs
+  | TryFinally (l, ssb, _, ssf) ->
+    let state = List.fold_left f state ssb in
+    List.fold_left f state ssf
+  | BlockStmt (l, ds, ss, _, _) -> List.fold_left f state ss
+  | PerformActionStmt (l, _, _, _, _, _, _, _, ss, _, _, _) -> List.fold_left f state ss
+  | ProduceLemmaFunctionPointerChunkStmt (l, _, proofo, ssbo) ->
+    let state =
+      match proofo with
+        None -> state
+      | Some (_, _, _, _, _, ss, _) -> List.fold_left f state ss
+    in
+    begin match ssbo with
+      None -> state
+    | Some ss -> f state ss
+    end
+  | ProduceFunctionPointerChunkStmt (l, ftn, fpe, targs, args, params, openBraceLoc, ss, closeBraceLoc) -> List.fold_left f state ss
+  | _ -> state
+
+(* Postfix fold *)
+let stmt_fold f state s =
+  let rec iter state s =
+    let state = stmt_fold_open iter state s in
+    f state s
+  in
+  iter state s
+
+(* Postfix iter *)
+let stmt_iter f s = stmt_fold (fun _ s -> f s) () s
 
 let type_expr_loc t =
   match t with

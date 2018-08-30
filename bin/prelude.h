@@ -32,6 +32,8 @@ predicate u_short_integer(unsigned short *p; unsigned short v);
 
 predicate pointer(void **pp; void *p);
 
+predicate integer_(void *p, int size, bool signed_; int v);
+
 lemma void character_limits(char *pc);
     requires [?f]character(pc, ?c);
     ensures [f]character(pc, c) &*& pc > (char *)0 &*& pc < (char *)UINTPTR_MAX &*& -128 <= c &*& c <= 127;
@@ -175,6 +177,10 @@ lemma_auto void chars_to_pointer(void *p);
     requires [?f]chars(p, sizeof(void *), ?cs);
     ensures [f]pointer(p, pointer_of_chars(cs));
 
+lemma_auto void chars_to_integer_(void *p, int size, bool signed_);
+    requires [?f]chars(p, size, ?cs);
+    ensures [f]integer_(p, size, signed_, _);
+
 // ... to chars
 lemma_auto void integer_to_chars(void *p);
     requires [?f]integer(p, ?i);
@@ -195,6 +201,10 @@ lemma_auto void u_short_integer_to_chars(void *p);
 lemma_auto void pointer_to_chars(void *p);
     requires [?f]pointer(p, ?v);
     ensures [f]chars(p, sizeof(void *), chars_of_pointer(v));
+
+lemma_auto void integer__to_chars(void *p, int size, bool signed_);
+    requires [?f]integer_(p, size, signed_, ?v);
+    ensures [f]chars(p, size, _);
 
 // u_character to/from character
 lemma_auto void u_character_to_character(void *p);
@@ -341,6 +351,22 @@ lemma_auto void uints_to_chars(void *p);
     requires [?f]uints(p, ?n, _);
     ensures [f]chars(p, n * sizeof(unsigned int), _);
 
+lemma_auto void chars_to_integers_(void *p, int size, bool signed_, int n);
+    requires [?f]chars(p, n * size, _);
+    ensures [f]integers_(p, size, signed_, n, _);
+
+lemma_auto void integers__to_chars(void *p);
+    requires [?f]integers_(p, ?size, ?signed_, ?n, _);
+    ensures [f]chars(p, n * size, _);
+
+lemma_auto void uchars_to_integers_(void *p, int size, bool signed_, int n);
+    requires [?f]uchars(p, n * size, _);
+    ensures [f]integers_(p, size, signed_, n, _);
+
+lemma_auto void integers__to_uchars(void *p);
+    requires [?f]integers_(p, ?size, ?signed_, ?n, _);
+    ensures [f]uchars(p, n * size, _);
+
 fixpoint list<void *> pointers_of_chars(list<char> cs);
 fixpoint list<char> chars_of_pointers(list<void *> ps);
 
@@ -352,6 +378,15 @@ lemma_auto void pointers_to_chars(void *pp);
     requires [?f]pointers(pp, ?n, ?ps) &*& true;
     ensures [f]chars(pp, n * sizeof(void *), chars_of_pointers(ps)) &*& pointers_of_chars(chars_of_pointers(ps)) == ps;
 
+predicate integers_(void *p, int size, bool signed_, int count; list<int> vs) =
+    count == 0 ?
+        vs == nil
+    :
+        integer_(p, size, signed_, ?v0) &*& integers_(p + size, size, signed_, count - 1, ?vs0) &*& vs == cons(v0, vs0);
+
+lemma_auto void integers__inv();
+    requires [?f]integers_(?p, ?size, ?signed_, ?count, ?vs);
+    ensures [f]integers_(p, size, signed_, count, vs) &*& length(vs) == count &*& 0 <= (uintptr_t)p &*& (uintptr_t)p <= UINTPTR_MAX;
 
 predicate divrem(int D, int d; int q, int r); // Rounds towards negative infinity, unlike C integer division and remainder.
 

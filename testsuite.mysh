@@ -408,6 +408,7 @@ cd tutorial_solutions
   verifast_both students.c
 cd ..
 cd tests
+  verifast_both -shared -target IP16 -allow_should_fail integer__pointee_pred.c
   verifast_both -c llong_fields.c
   verifast_both -c -allow_should_fail -allow_undeclared_struct_types undeclared_structs.c
   verifast_both stresstest-one-plus-one.c
@@ -439,6 +440,7 @@ cd tests
     cd ..
   cd ..
   cd errors
+    verifast -c -prover z3v4.5 int_lit_overflow.c
     verifast_both -c -allow_should_fail basics.c
     verifast_both -c -allow_should_fail typecheck1.c
     verifast_both -c -allow_should_fail ghost_assignment.c
